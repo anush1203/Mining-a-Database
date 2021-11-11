@@ -1,0 +1,605 @@
+---
+title: "R Notebook"
+output:
+html_document:
+df_print: paged
+---
+# Practicum 2 submission by Aisha Kothare and Anush Mandya Nagesh #
+### ------------------------------------------------------------------------------------------------------------------------- ###
+## PART 1 ##
+
+### Question 1: (5 pts) Create a normalized relational schema that contains minimally the following entities: Article, Journal, Author, History. Use the XML document to determine the appropriate attributes (fields/columns) for the entities (tables). While there may be other types of publications in the XML, you only need to deal with articles in journals. Create appropriate primary and foreign keys. Where necessary, add surrogate keys. Include an image of an ERD showing your model in your R Notebook. ###
+
+### Sol: ###
+
+```{r}
+library(sqldf)
+library(XML)
+library(dplyr)
+```
+
+```{r}
+library(RSQLite)
+fpath = "C:/Users/anush/NEU_resources_and_projects/DBMS"
+dbfile="pubmed_db.sqlite"
+dbcon<-dbConnect(RSQLite::SQLite(),paste0(fpath,dbfile))
+dbExecute(dbcon, "PRAGMA foreign_keys = OFF;")
+dbListTables(dbcon)
+```
+![ERD](C:/Users/anush/OneDrive/Desktop/Practicum2/Practicum2ERD1.png)
+
+### ------------------------------------------------------------------------------------------------------------------------- ###
+
+### Question 2 : (5 pts) Realize the relational schema in SQLite (place the CREATE TABLE statements into SQL chunks in your R Notebook). ###
+
+## Creating SQL Tables ##
+```{sql connection=dbcon}
+Drop Table IF EXISTS Article
+
+```
+
+```{sql connection=dbcon}
+CREATE TABLE Article 
+  ( 
+  ArticleId TEXT NOT NULL,
+  ArticleTitle TEXT,
+  PublicationModel TEXT,
+  Language TEXT,
+  ElocationID TEXT,
+  CONSTRAINT PK_Article PRIMARY KEY (ArticleId)
+  );
+```
+
+```{sql connection=dbcon}
+Drop Table IF EXISTS Author
+```
+
+```{sql connection=dbcon}
+CREATE TABLE Author 
+  ( 
+  AuthorId INTEGER NOT NULL, 
+  LastName TEXT, 
+  ForeName TEXT,
+  Initials TEXT, 
+  ValidYN TEXT,
+  Affiliation TEXT, 
+  CONSTRAINT PK_Author PRIMARY KEY (AuthorId) 
+  );
+```
+
+```{sql connection=dbcon}
+Drop Table IF EXISTS Authorship
+```
+
+```{sql connection=dbcon}
+CREATE TABLE Authorship 
+  ( 
+  ArticleId TEXT NOT NULL,
+  AuthorId INTEGER NOT NULL,
+  CONSTRAINT PK_Authorship PRIMARY KEY (ArticleId,AuthorId),
+  CONSTRAINT has FOREIGN KEY (ArticleId) REFERENCES Article (ArticleId),
+  CONSTRAINT has FOREIGN KEY (AuthorId) REFERENCES Author (AuthorId) 
+  );
+```
+
+```{sql connection=dbcon}
+DROP TABLE IF EXISTS Journal
+```
+
+
+```{sql connection=dbcon}
+CREATE TABLE Journal ( 
+  Issue_Id INTEGER NOT NULL,
+  ISSN TEXT, 
+  CitedMedium INTEGER,
+  ISSN_Type INTEGER,
+  Volume INTEGER, 
+  Issue INTEGER, 
+  PubDate date,
+  Title TEXT, 
+  ISOAbbreviation TEXT,
+  CONSTRAINT PK_Journal PRIMARY KEY (Issue_Id) );
+```
+
+```{sql connection=dbcon}
+Drop Table IF EXISTS Journal_Ownership
+```
+
+```{sql connection=dbcon}
+CREATE TABLE Journal_Ownership ( 
+ArticleId TEXT NOT NULL, 
+Issue_Id INTEGER NOT NULL,
+CONSTRAINT PK_Journal_Ownership PRIMARY KEY (ArticleId,Issue_Id), 
+CONSTRAINT has FOREIGN KEY (ArticleId) REFERENCES Article (ArticleId),
+CONSTRAINT has FOREIGN KEY (Issue_Id) REFERENCES Journal (Issue_Id) );
+```
+
+```{sql connection=dbcon}
+Drop Table PubMedHistory
+```
+
+```{sql connection=dbcon}
+CREATE TABLE PubMedHistory (
+PubMedId INTEGER NOT NULL,
+PubStatus TEXT,
+PubMedDate date,
+CONSTRAINT PK_PubMedHistory PRIMARY KEY (PubMedId) );
+```
+
+```{sql connection=dbcon}
+Drop Table IF EXISTS PubMed
+```
+
+```{sql connection=dbcon}
+CREATE TABLE PubMed ( 
+ArticleId TEXT NOT NULL, 
+PubMedId INTEGER NOT NULL,
+CONSTRAINT PK_PubMed PRIMARY KEY (ArticleId,PubMedId),
+CONSTRAINT has FOREIGN KEY (ArticleId) REFERENCES Article (ArticleId), 
+CONSTRAINT has FOREIGN KEY (PubMedId) REFERENCES PubMedHistory (PubMedId) );
+```
+
+##  Schema ##
+
+```{r}
+dbGetQuery(dbcon, "pragma table_info('Author')")
+```
+```{r}
+dbGetQuery(dbcon, "pragma table_info('Article')")
+```
+```{r}
+dbGetQuery(dbcon, "pragma table_info('Journal')")
+```
+```{r}
+dbGetQuery(dbcon, "pragma table_info('Journal_Ownership')")
+```
+```{r}
+dbGetQuery(dbcon, "pragma table_info('Authorship')")
+```
+```{r}
+dbGetQuery(dbcon, "pragma table_info('PubMed')")
+```
+```{r}
+dbGetQuery(dbcon, "pragma table_info('PubMedHistory')")
+```
+### ------------------------------------------------------------------------------------------------------------------------- ###
+### Question 3: (30 pts) Extract and transform the data from the XML and then load into the appropriate tables in the database. You cannot (directly and solely) use xmlToDataFrame but instead must parse the XML node by node using a combination of node-by-node tree traversal and XPath. It is not feasible to use XPath to extract all journals, then all authors, etc. as some are missing and won't match up. You will need to iterate through the top-level nodes. While outside the scope of the course, this task could also be done through XSLT. ###
+
+Solution:
+```{r}
+path <- "C:/Users/anush/NEU_resources_and_projects/DBMS"
+xmlFile <- "pubmed_sample.xml"
+xmlObj <- xmlParse(file = paste(path,xmlFile,sep="/"),validate=T)
+root <- xmlRoot(xmlObj)
+```
+
+
+```{r}
+Title<-xmlSApply(root,function(x)xmlValue(x[['MedlineCitation']][['Article']][['ArticleTitle']]))
+
+Model<-xmlSApply(root,function(x)xmlAttrs(x[['MedlineCitation']][['Article']]))
+
+Lang<-xmlSApply(root,function(x)xmlValue(x[['MedlineCitation']][['Article']][['Language']]))
+
+EID<-xmlSApply(root,function(x)xmlValue(x[['MedlineCitation']][['Article']][['ELocationID']]))
+
+df.Article<-tibble::rowid_to_column(data.frame('ArticleTitle'=unique(Title)), 'ArticleId')
+
+df.Article$PublicationModel<-Model
+
+df.Article$Language<-Lang
+
+df.Article$ELocationID<-EID
+
+dbWriteTable(dbcon,'Article',df.Article, overwrite=TRUE)
+```
+
+```{sql connection=dbcon}
+select * from Article limit 5
+```
+
+
+```{r}
+IssnType<-xmlSApply(root,function(x)xmlAttrs(x[['MedlineCitation']][['Article']][['Journal']][['ISSN']]))
+
+ISSN<-xmlSApply(root,function(x)xmlValue(x[['MedlineCitation']][['Article']][['Journal']][['ISSN']]))
+
+Citedmedium<-xmlSApply(root,function(x)xmlAttrs(x[['MedlineCitation']][['Article']][['Journal']][['JournalIssue']]))
+
+Volume<-xmlSApply(root,function(x)xmlValue(x[['MedlineCitation']][['Article']][['Journal']][['JournalIssue']][['Volume']]))
+
+Issue<-xmlSApply(root,function(x)xmlValue(x[['MedlineCitation']][['Article']][['Journal']][['JournalIssue']][['Issue']]))
+
+PubDate<-xmlSApply(root,function(x)xmlValue(x[['MedlineCitation']][['Article']][['Journal']][['JournalIssue']][['PubDate']]))
+
+Title<-xmlSApply(root,function(x)xmlValue(x[['MedlineCitation']][['Article']][['Journal']][['Title']]))
+
+ISOAbbreviation<-xmlSApply(root,function(x)xmlValue(x[['MedlineCitation']][['Article']][['Journal']][['ISOAbbreviation']]))
+
+df.Journal<-data.frame('ISSN'=ISSN,'ISSN_Type'=IssnType,'CitedMedium'=Citedmedium,'Volume'=Volume,'Issue'=Issue,'PubDate'=PubDate,'Title'=Title,'ISOAbbreviation'=ISOAbbreviation) 
+df.Journal$ArticleId<-seq(1:19)
+
+df.Journal<-tibble::rowid_to_column(data.frame(df.Journal), 'Issue_Id')
+
+dbWriteTable(dbcon,"Journal_Ownership",df.Journal[,c(10,1)], overwrite=TRUE)
+
+dbWriteTable(dbcon,"Journal",df.Journal[,-c(10)], overwrite=TRUE)
+```
+
+```{sql connection=dbcon}
+select * from Journal;
+```
+
+```{sql connection=dbcon}
+select * from Journal_Ownership;
+```
+
+```{r}
+LastName<-c() 
+ForeName<-c() 
+Initials<-c() 
+ValidYN<-c() 
+Affiliation<-c() 
+ArticleId<-c()
+
+for (i in seq(1:length(names(root)))) 
+{ 
+  for (j in seq(1:length(names(root[[i]][['MedlineCitation']][['Article']][['AuthorList']])))) 
+    {
+    LastName<-c(LastName,xmlValue(root[[i]][['MedlineCitation']][['Article']][['AuthorList']][[j]][['LastName']]) )     } 
+}
+
+for (i in seq(1:length(names(root)))) 
+{
+  for (j in seq(1:length(names(root[[i]][['MedlineCitation']][['Article']][['AuthorList']])))) 
+  { Initials<-c(Initials,xmlValue(root[[i]][['MedlineCitation']][['Article']][['AuthorList']][[j]][['Initials']]) )   } 
+}
+
+for (i in seq(1:length(names(root))))
+{
+  for (j in seq(1:length(names(root[[i]][['MedlineCitation']][['Article']][['AuthorList']]))))
+  { ValidYN<-c(ValidYN,xmlAttrs(root[[i]][['MedlineCitation']][['Article']][['AuthorList']][[j]]) ) 
+  } 
+}
+
+for (i in seq(1:length(names(root)))) 
+{
+  for (j in seq(1:length(names(root[[i]][['MedlineCitation']][['Article']][['AuthorList']]))))
+    {
+    ForeName<-c(ForeName,xmlValue(root[[i]][['MedlineCitation']][['Article']][['AuthorList']][[j]][['ForeName']]) ) 
+  }
+  }
+
+for (i in seq(1:length(names(root)))) 
+{
+  for (j in seq(1:length(names(root[[i]][['MedlineCitation']][['Article']][['AuthorList']])))) 
+  { Affiliation<-c(Affiliation,xmlValue(root[[i]][['MedlineCitation']][['Article']][['AuthorList']][[j]][['Affiliation']]) ) 
+  } 
+  }
+
+for (i in seq(1:length(names(root))))
+{ 
+  for (j in seq(1:length(names(root[[i]][['MedlineCitation']][['Article']][['AuthorList']])))) {
+    ArticleId<-c(ArticleId,i )
+  }
+  }
+
+df.Author<-data.frame('LastName'=LastName,'ForeName'=ForeName,'Initials'=Initials,'ValidYN'=ValidYN,'Affiliation'=Affiliation) 
+
+df.Author<-tibble::rowid_to_column(data.frame(df.Author), 'AuthorId')
+
+dbWriteTable(dbcon,'Author',df.Author, overwrite=TRUE)
+
+df.Author$ArticleId<-ArticleId
+
+dbWriteTable(dbcon,"Authorship",df.Author[,c(7,1)], overwrite=TRUE)
+```
+
+```{sql connection=dbcon}
+select * from Author;
+
+```
+
+```{sql connection=dbcon}
+select * from Authorship;
+```
+
+```{r}
+PubStatus<-c() 
+PubMedDate<-c()
+
+ExtractDate<-function(x) {
+
+  as.Date(paste(x['Year'],x['Month'], x['Day'], sep='/'), format='%Y/%m/%d')
+
+}
+
+for (i in seq(1:length(names(root)))) { for (j in seq(1:length(names(root[[i]][["PubmedData"]][['History']])))) { PubStatus<-c(PubStatus,xmlAttrs(root[[i]][['PubmedData']][['History']][[j]]) ) } }
+
+for (i in seq(1:length(names(root)))) { for (j in seq(1:length(names(root[[i]][['PubmedData']][['History']])))) { PubMedDate<-c(PubMedDate,ExtractDate(xmlApply(root[[i]][['PubmedData']][['History']][[j]],function(x)xmlValue(x)) ) )
+
+}
+}
+
+PubMedDate<-as.character(as.Date(PubMedDate, origin ='1970-01-01'))
+
+ArticleId<-c()
+
+for (i in seq(1:length(names(root)))) { for (j in seq(1:length(names(root[[i]][['PubmedData']][['History']])))) { ArticleId<-c(ArticleId,i)
+
+}
+}
+
+df.PubMed<-data.frame('ArticleId'=ArticleId,'PubStatus'=PubStatus,'PubMedDate'=PubMedDate) 
+df.PubMed <-tibble::rowid_to_column(data.frame(df.PubMed), 'PubMedId')
+
+dbWriteTable(dbcon,'PubMedHistory',df.PubMed[,c(1,3,4)], overwrite=TRUE)
+
+dbWriteTable(dbcon,'PubMed',df.PubMed[,c(2,1)], overwrite=TRUE)
+```
+
+```{sql connection=dbcon}
+select * from PubMedHistory;
+
+```
+
+```{sql connection=dbcon}
+select * from PubMed;
+
+```
+### ------------------------------------------------------------------------------------------------------------------------- ###
+## PART 2 ##
+
+### Question 1: Create and populate a star schema with dimension and transaction fact tables. Each row in the fact table will represent one article fact. Include the image of an updated ERD that contains the fact table and any additional required dimension tables. Populate the star schema in R. When building the schema, look a head to Part 3 as the schema is dependent on the eventual OLAP queries.###
+
+### Sol: ###
+
+```{r}
+star <- dbConnect(RSQLite::SQLite(), "Star")
+```
+
+```{r}
+dbExecute(star, "PRAGMA foreign_keys = OFF;")
+```
+#STAR SCHEMA
+![ERD](C:/Users/anush/OneDrive/Desktop/Practicum2/Practicum2ERD2.png)
+
+
+
+```{r}
+dbExecute(star,"Drop Table IF EXISTS Author")
+```
+
+```{r}
+dbExecute(star," CREATE TABLE Author ( AuthorId INTEGER NOT NULL, LastName TEXT, ForeName NONE, Initials TEXT, ValidYN TEXT, Affiliation TEXT, CONSTRAINT PK_Author PRIMARY KEY (AuthorId) ); ")
+```
+
+```{r}
+dbExecute(star,"Drop Table IF EXISTS Journal")
+```
+
+```{r}
+dbExecute(star," CREATE TABLE Journal ( Issue_Id INTEGER NOT NULL, ISSN TEXT, ISSN_Type TEXT, CitedMedium TEXT, Volume INTEGER, Issue INTEGER, PubDate date, Title TEXT, ISOAbbreviation TEXT, CONSTRAINT PK_Journal PRIMARY KEY (Issue_Id) );
+
+")
+```
+```{r}
+dbExecute(star,"Drop Table IF EXISTS PubMedHistory")
+```
+```{r}
+dbExecute(star," CREATE TABLE PubMedHistory ( PubMedId INTEGER NOT NULL, PubStatus TEXT, Year INTEGER, Month INTEGER, Quarter INTEGER, Day INTEGER, CONSTRAINT PK_PubMedHistory PRIMARY KEY (PubMedId) ); ")
+```
+```{r}
+dbExecute(star,"Drop Table IF EXISTS Article")
+```
+
+```{r}
+dbExecute(star," CREATE TABLE Article ( ArticleId INTEGER NOT NULL, ArticleTitle TEXT, PublicationModel TEXT, Language TEXT, ElocationID TEXT, CONSTRAINT PK_Article PRIMARY KEY (ArticleId) ); ")
+```
+```{r}
+dbExecute(star,"Drop Table IF EXISTS FactTable")
+```
+
+```{r}
+dbExecute(star," CREATE TABLE FactTable ( Fact_Id INTEGER NOT NULL CONSTRAINT PK_FactTable PRIMARY KEY AUTOINCREMENT, ArticleId INTEGER NOT NULL, AuthorId INTEGER NOT NULL, Issue_Id INTEGER NOT NULL, PubMedId INTEGER NOT NULL, CONSTRAINT has FOREIGN KEY (AuthorId) REFERENCES Author (AuthorId), CONSTRAINT has FOREIGN KEY (Issue_Id) REFERENCES Journal (Issue_Id), CONSTRAINT has FOREIGN KEY (PubMedId) REFERENCES PubMedHistory (PubMedId), CONSTRAINT has FOREIGN KEY (ArticleId) REFERENCES Article (ArticleId) );
+
+")
+```
+```{r}
+dbWriteTable(star,'Author',df.Author[,-c(7)],  overwrite=TRUE)
+
+dbWriteTable(star,'Journal',df.Journal[,-c(10)], overwrite=TRUE)
+
+dbWriteTable(star,'Article',df.Article, overwrite=TRUE)
+
+
+```
+
+```{r}
+
+Fact<-dbGetQuery(dbcon,'select Ar.ArticleId,A.AuthorId, J.Issue_Id,P.PubMedId from Article Ar inner join Authorship A on Ar.ArticleId=A.ArticleId inner join PubMed P on P.ArticleId=Ar.ArticleId inner join Journal_Ownership J on J.ArticleId=Ar.ArticleId')
+```
+
+```{r}
+dbWriteTable(star,'FactTable',Fact, overwrite=TRUE)
+```
+
+```{r}
+PubMedDim<-dbGetQuery(dbcon,"select PubMedId,PubStatus,strftime('%Y',PubMedDate) as 'Year', strftime('%m',PubMedDate) as 'Month',CASE 
+  WHEN cast(strftime('%m', PubMedDate) as integer) BETWEEN 1 AND 3 THEN 1
+  WHEN cast(strftime('%m', PubMedDate) as integer) BETWEEN 4 and 6 THEN 2
+  WHEN cast(strftime('%m', PubMedDate) as integer) BETWEEN 7 and 9 THEN 3
+  ELSE 4 END as Quarter,strftime('%d',PubMedDate) as 'Day' from PubMedHistory")
+dbWriteTable(star,'PubMedHistory',PubMedDim, overwrite=TRUE)
+```
+
+```{r}
+dbGetQuery(star,"select * from PubMedHistory limit 10")
+```
+
+
+```{r}
+dbGetQuery(star,"select * from Author limit 10")
+```
+
+
+```{r}
+dbGetQuery(star,"select * from Journal limit 10")
+```
+
+```{sql connection=star}
+select * from FactTable limit 10;
+```
+
+![ERD](C:/Users/anush/OneDrive/Desktop/Practicum2/Practicum2ERD3.png)
+
+
+### ------------------------------------------------------------------------------------------------------------------------- ###
+
+
+### Question 2: ###
+### In the same schema as the previous step, create and populate a summary fact table or revise the previously created fact table that represents number of articles per time period (quarter, year) by author and by journal. Include the image of an updated ERD that contains the fact table. Populate the fact table in R. When building the schema, look a head to Part 3 as the schema is dependent on the eventual OLAP queries. ###
+
+### Sol: ###
+
+```{r}
+dbExecute(star,"Drop Table IF EXISTS AuthorSummaryTable")
+```
+
+```{r}
+dbExecute(star,"
+
+CREATE TABLE AuthorSummaryTable ( Summary_Id INTEGER NOT NULL CONSTRAINT PK_AuthorSummaryTable PRIMARY KEY AUTOINCREMENT, AuthorId INTEGER NOT NULL, Year date, Quarter INTEGER, Month INTEGER, Day INTEGER, UpdateChangeCount INTEGER, CONSTRAINT has FOREIGN KEY (AuthorId) REFERENCES Author (AuthorId) );
+
+")
+```
+
+```{r}
+dbExecute(star,"Drop Table IF EXISTS JournalSummaryTable")
+```
+
+```{r}
+dbExecute(star,"
+CREATE TABLE JournalSummaryTable ( Summary_Id INTEGER NOT NULL CONSTRAINT PK_AuthorSummaryTable PRIMARY KEY AUTOINCREMENT, JournalTitle TEXT, Year INTEGER, Quarter INTEGER, Month INTEGER, Day INTEGER, UpdateChangeCount INTEGER
+);
+")
+```
+### ------------------------------------------------------------------------------------------------------------------------- ###
+## PART 3 ##
+
+### Write queries using your data warehouse to explore whether the publications show a seasonal pattern. For example, create a line graph that shows the number of publications for all journals each quarter or the average number of days between submission and publication. If necessary, adjust your fact table(s) as needed to support your new queries. If you need to update the fact table, document your changes and your reasons why the changes are needed. ###
+
+### Sol: ###
+
+```{sql connection=star,output.var='authorsummary'}
+select  F.AuthorId,P.Year,P.Quarter,P.Month,P.Day ,count(F.ArticleId) as UpdateChangeCount
+from FactTable as F, PubMedHistory as P where F.PubMedId=P.PubMedId Group by F.AuthorId,
+P.Year,P.Quarter,P.Month,P.Day
+```
+
+```{sql connection=star,output.var='journalsummary'}
+select J.Title as JournalTitle, P.Year,P.Quarter,P.Month,P.Day,count(F.ArticleId) as UpdateChangeCount
+from Journal as J, PubMedHistory as P, FactTable as F where F.PubMedId=P.PubMedId 
+and F.Issue_Id=J.Issue_Id group by J.Title,P.Year,P.Quarter,P.Month,P.Day
+````
+
+```{r}
+dbWriteTable(star,"AuthorSummaryTable",authorsummary, append=TRUE)
+```
+```{r}
+dbWriteTable(star,"JournalSummaryTable",journalsummary, append=TRUE)
+```
+
+```{sql connection=star}
+select * from AuthorSummaryTable;
+```
+```{sql connection=star}
+select * from JournalSummaryTable limit 10;
+
+```
+
+```{sql connection=star}
+select JournalTitle,Year,Quarter,sum(UpdateChangeCount) from JournalSummaryTable group by JournalTitle,Year,Quarter order by Year,Quarter limit 20; 
+
+```
+
+
+
+```{sql connection=star,output.var='AuthorPattern'}
+select AST.AuthorId,A.ForeName||" "||A.LastName as NAME,AST.Year,AST.Quarter,AST.Month,AST.Day, AST.UpdateChangeCount
+                          from AuthorSummaryTable AST inner join Author A on AST.AuthorId=A.AuthorID
+```
+
+```{r}
+dbWriteTable(star,"AuthorPatternTable",AuthorPattern, append=TRUE)
+```
+
+```{sql connection=star}
+select * from AuthorPatternTable;
+```
+
+### ------------------------------------------------------------------------------------------------------------------------- ###
+
+
+
+### The below query gives us the total number of articles published every quarter. ###
+
+```{sql connection=star, output.var='TotalPerQuarterTab'}
+SELECT A.Quarter, sum(UpdateChangeCount) AS TotalPerQuarter FROM AuthorSummaryTable A GROUP BY Quarter
+```
+```{r}
+dbWriteTable(star,"TotalPerQuarterTable",TotalPerQuarterTab, append=TRUE)
+```
+
+```{sql connection=star}
+select * from TotalPerQuarterTable;
+```
+```{r}
+library(ggplot2)
+library(sqldf)
+
+ggplot(TotalPerQuarterTab, aes(x=Quarter, y=TotalPerQuarter)) +
+  geom_line(color = "dodgerblue") + labs(x = "Aggregate Quarters trend", y = "Total published per quarter", title = "Total publications per quarter over the years") + 
+  theme(axis.title = element_text(color = "firebrick",face = "bold", size = 13),axis.text = element_text(color = "dodgerblue",size = 12, face = "bold"),plot.title = element_text(face = "bold",margin = margin(10, 0, 10, 0),size = 14),panel.grid.major = element_line(size = .5, linetype = "dashed"),
+        panel.grid.minor = element_line(size = .25, linetype = "dotted"),
+        panel.grid.major.x = element_line(color = "green1"),
+        panel.grid.major.y = element_line(color = "yellow1"),
+        panel.grid.minor.x = element_line(color = "green2"),
+        panel.grid.minor.y = element_line(color = "yellow2"))
+
+```
+
+### As we can see from the graph the third quarter(July-September) has the most number of article publications. The second quarter(April-June) has the lowest number of publications with only 116 articles that quarter. ###
+### The graph clearly shows the seasonal shift in the number of articles published. ###
+
+### --------------------------------------------------------------------------------------------------------------------------- ###
+
+### The below query gives us the number of articles published by an author over every quarter. ###
+
+```{sql connection=star,output.var='TotalByAuthorId'}
+select Quarter, AuthorId, sum(UpdateChangeCount) as total From AuthorSummaryTable group by AuthorId,Quarter
+```
+
+```{r}
+head(TotalByAuthorId)
+```
+
+```{r}
+library(ggplot2)
+
+#for(i in (unique(TotalByAuthorId$Quarter))) {                              
+# print(ggplot(data = TotalByAuthorId[which(TotalByAuthorId$Quarter==i),], aes(x = AuthorId, y = total )) + geom_line())}
+ggplot(TotalByAuthorId, aes(x= AuthorId,y=total)) +
+geom_bar(stat = "identity", width = 0.7) + labs(x = "Author Id", y = "Total published per author", title = "Total publications per author each quarter")+
+theme(axis.title = element_text(color = "firebrick",face = "bold", size = 13),axis.text = element_text(color = "dodgerblue",size = 12, face = "bold"),plot.title = element_text(face = "bold",margin = margin(10, 0, 10, 0),size = 14),panel.grid.major = element_line(size = .5, linetype = "dashed"),
+        panel.grid.minor = element_line(size = .25, linetype = "dotted"),
+        panel.grid.major.x = element_line(color = "green1"),
+        panel.grid.major.y = element_line(color = "yellow1"),
+        panel.grid.minor.x = element_line(color = "green2"),
+        panel.grid.minor.y = element_line(color = "yellow2")) +
+  facet_wrap( ~Quarter, scales = "free_x")
+```
+
+### The above graph shows us the number of articles published by authors over the 4 quarters. We can see that the graphs are labeled on the top indicating the Quarters. ###
+### X-axis represents AuthorIds and Y-axis represnts the total number of publications. ###
+### The graph clearly shows which author publishes the most in which Quarter/ season. Analyzing this trend can be very useful to predict an author's patterns in the future. ###
